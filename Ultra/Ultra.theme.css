@@ -63,4 +63,11 @@
     --boost-bar: none;
 }
 
+button[aria-label="Send a gift"]{
+    display: none;
+}
+button[aria-label="Open GIF picker"]{
+    display: none;
+}
+
 /* Made By The Commie Axolotl */
