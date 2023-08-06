@@ -70,4 +70,15 @@ button[aria-label="Open GIF picker"]{
     display: none;
 }
 
+[aria-label^="Add Super Reaction"],
+#message-add-reaction-1,
+#super-reaction-picker-tab,
+[class^="burstEmojiSection-"],
+[aria-label^="Reaction Picker Categories"],
+[class^="reactionDefault-"][aria-label*="super reaction"],
+[class^="reactionSelected-"][aria-label*="super reaction"],
+[class^="reactions-"] > div > [style*="background:"] {
+  display: none !important;
+}
+
 /* Made By The Commie Axolotl */
