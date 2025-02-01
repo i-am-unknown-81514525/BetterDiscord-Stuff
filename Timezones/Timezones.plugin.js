@@ -2,7 +2,7 @@
  * @name Timezones
  * @author TheCommieAxolotl#0001
  * @description Allows you to display other Users' local times.
- * @version 1.0.3
+ * @version 1.3.2
  * @authorId 538487970408300544
  * @invite 5BSWtSM3XU
  * @source https://github.com/TheCommieAxolotl/BetterDiscord-Stuff/tree/main/Timezones
@@ -21,7 +21,7 @@ module.exports = (() => {
                 },
             ],
             github_raw: "https://raw.githubusercontent.com/TheCommieAxolotl/BetterDiscord-Stuff/main/Timezones/Timezones.plugin.js",
-            version: "1.0.3",
+            version: "1.3.2",
             description: "Allows you to display other Users' local times.",
         },
         defaultConfig: [
@@ -34,8 +34,14 @@ module.exports = (() => {
             {
                 type: "switch",
                 id: "showInMessage",
-                name: "Show timezone next to message timestamp",
+                name: "Show local timestamp next to message",
                 value: true,
+            },
+            {
+                type: "switch",
+                id: "showOffset",
+                name: "Show localized GMT format (e.g., GMT-8)",
+                value: false,
             },
         ],
     };
@@ -62,7 +68,7 @@ module.exports = (() => {
                       confirmText: "Download Now",
                       cancelText: "Cancel",
                       onConfirm: () => {
-                          require("request").get("https://rauenzi.github.io/BDPluginLibrary/release/0PluginLibrary.plugin.js", async (error, response, body) => {
+                          require("request").get("https://zerebos.github.io/BDPluginLibrary/release/0PluginLibrary.plugin.js", async (error, response, body) => {
                               if (error) return require("electron").shell.openExternal("https://betterdiscord.app/Download?id=9");
                               await new Promise((r) => require("fs").writeFile(require("path").join(BdApi.Plugins.folder, "0PluginLibrary.plugin.js"), body, r));
                           });
@@ -75,7 +81,7 @@ module.exports = (() => {
         : (([Plugin, Api]) => {
               const plugin = (Plugin, Api) => {
                   const { Patcher } = Api;
-                  const { Data, React, injectCSS, clearCSS, Webpack, ContextMenu, UI } = BdApi;
+                  const { Data, React, injectCSS, clearCSS, Webpack, ContextMenu, UI, Components } = BdApi;
 
                   const DataStore = new Proxy(
                       {},
@@ -105,6 +111,10 @@ module.exports = (() => {
     font-weight: 500;
 }
 
+[class*="compact"] .timezone {
+    display: inline;
+}
+
 .timezone-margin-top {
     margin-top: 0.5rem;
 }
@@ -115,8 +125,8 @@ module.exports = (() => {
 
 .timezone-badge {
     position: absolute;
-    bottom: 10px;
-    right: 16px;
+    top: 10px;
+    left: 10px;
     background: var(--profile-body-background-color, var(--background-primary));
     border-radius: 4px;
     padding: 0.25rem 0.5rem;
@@ -125,49 +135,54 @@ module.exports = (() => {
 }
                   `;
 
-                  const TextInput = Webpack.getModule((m) => m?.Sizes?.MINI && m?.defaultProps?.type === "text", {
-                      searchExports: true,
-                  });
-                  const Markdown = Webpack.getModule((m) => m.Z?.rules && m.Z?.defaultProps?.parser).Z;
+                  const Markdown = Webpack.getModule((m) => m?.rules && m?.defaultProps?.parser);
+                  const SearchableSelect = Webpack.getByKeys("Button", "SearchableSelect")?.SearchableSelect;
+                  const ProfileBanner = Webpack.getModule(Webpack.Filters.byStrings("canUsePremiumProfileCustomization", "let{profileType", "displayProfile"), { defaultExport: false });
+                  const MessageHeader = Webpack.getModule(Webpack.Filters.byStrings("userOverride", "withMentionPrefix"), { defaultExport: false });
+                  const Tooltip = Components.Tooltip;
+                  const i18n = Webpack.getByKeys("getLocale");
 
                   return class Timezones extends Plugin {
                       async onStart() {
                           injectCSS("Timezones-Styles", Styles);
 
-                          const ProfileBanner = Webpack.getModule((m) => m.Z?.toString().includes("e.hasBanner") && m.Z?.toString().includes("e.hasThemeColors"));
-                          const MessageHeader = Webpack.getModule((m) => m.Z?.toString().includes("userOverride") && m.Z?.toString().includes("withMentionPrefix"));
-                          const Tooltip = BdApi.Components.Tooltip;
-
                           ContextMenu.patch("user-context", this.userContextPatch);
 
                           Patcher.after(ProfileBanner, "Z", (_, [props], ret) => {
-                              const originalRet = { ...ret };
-
                               if (!this.hasTimezone(props.user.id)) return;
 
-                              ret.type = "div";
-                              ret.props = {
-                                  className: "timezone-banner-container",
-                                  children: [
-                                      originalRet,
-                                      React.createElement(Tooltip, {
-                                          text: this.getFullTime(props.user.id),
-                                          children: (p) => React.createElement("div", { ...p, className: "timezone-badge" }, this.getLocalTime(props.user.id)),
-                                      }),
-                                  ],
-                              };
+                              ret.props.children = React.createElement(Tooltip, {
+                                  text:
+                                      this.getTime(props.user.id, Date.now(), { weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "numeric" }) +
+                                      ` (${DataStore[props.user.id]})`,
+                                  children: (p) => React.createElement("div", { ...p, className: "timezone-badge" }, this.getTime(props.user.id, Date.now(), { hour: "numeric", minute: "numeric" })),
+                              });
                           });
 
                           Patcher.after(MessageHeader, "Z", (_, [props], ret) => {
                               if (props.isRepliedMessage || !this.settings.showInMessage) return;
 
-                              this.hasTimezone(props.message.author.id) &&
-                                  ret.props.children.push(
-                                      React.createElement(Tooltip, {
-                                          text: this.getFullTime(props.message.author.id, props.message.timestamp._d),
-                                          children: (p) => React.createElement("span", { ...p, className: "timezone" }, this.getLocalTime(props.message.author.id, props.message.timestamp._d)),
-                                      })
-                                  );
+                              if (!this.hasTimezone(props.message.author.id)) return;
+
+                              ret.props.children.push(
+                                  React.createElement(Tooltip, {
+                                      text:
+                                          this.getTime(props.message.author.id, props.message.timestamp, {
+                                              weekday: "long",
+                                              year: "numeric",
+                                              month: "long",
+                                              day: "numeric",
+                                              hour: "numeric",
+                                              minute: "numeric",
+                                          }) + ` (${DataStore[props.message.author.id]})`,
+                                      children: (p) =>
+                                          React.createElement(
+                                              "span",
+                                              { ...p, className: "timezone" },
+                                              this.getTime(props.message.author.id, props.message.timestamp, { hour: "numeric", minute: "numeric" })
+                                          ),
+                                  })
+                              );
                           });
                       }
 
@@ -180,8 +195,14 @@ module.exports = (() => {
                                   type: "submenu",
                                   label: "Timezones",
                                   children: [
+                                      DataStore[props.user.id] &&
+                                          ContextMenu.buildItem({
+                                              type: "text",
+                                              disabled: true,
+                                              label: DataStore[props.user.id],
+                                          }),
                                       ContextMenu.buildItem({
-                                          label: "Set Timezone",
+                                          label: DataStore[props.user.id] ? "Change Timezone" : "Set Timezone",
                                           action: () => {
                                               return this.setTimezone(props.user.id, props.user);
                                           },
@@ -194,47 +215,57 @@ module.exports = (() => {
                                               return this.removeTimezone(props.user.id, props.user);
                                           },
                                       }),
-                                  ],
+                                  ].filter((x) => x),
                               }),
                           ]);
                       };
 
                       hasTimezone(id) {
-                          return !!DataStore[id];
+                          const value = DataStore[id];
+
+                          return !Array.isArray(value) && !!value;
                       }
 
                       setTimezone(id, user) {
-                          let hours = 0;
-                          let minutes = 0;
+                          let outvalue = null;
+
+                          // https://github.com/Syncxv/vc-timezones/blob/master/TimezoneModal.tsx
+                          // I totally forgot about the Intl API until I saw their plugin in vencord
+                          const options = Intl.supportedValuesOf("timeZone").map((timezone) => {
+                              const offset = new Intl.DateTimeFormat(undefined, { timeZone: timezone, timeZoneName: "short" })
+                                  .formatToParts(new Date())
+                                  .find((part) => part.type === "timeZoneName").value;
+
+                              return { label: `${timezone} (${offset})`, value: timezone };
+                          });
 
                           UI.showConfirmationModal(
-                              `Set Timezone for ${user.username}#${user.discriminator}`,
+                              `Set Timezone for ${user.username}`,
                               [
-                                  React.createElement(Markdown, null, "Please enter a UTC hour offset."),
-                                  React.createElement(TextInput, {
-                                      type: "number",
-                                      maxLength: "2",
-                                      placeholder: DataStore[id]?.[0] || "0",
-                                      onChange: (v) => {
-                                          hours = v;
-                                      },
-                                  }),
-                                  React.createElement(Markdown, { className: "timezone-margin-top" }, "Please enter a UTC minute offset."),
-                                  React.createElement(TextInput, {
-                                      type: "number",
-                                      maxLength: "2",
-                                      placeholder: DataStore[id]?.[1] || "0",
-                                      onChange: (v) => {
-                                          minutes = v;
-                                      },
+                                  React.createElement(Markdown, null, "Please select a timezone."),
+                                  React.createElement(() => {
+                                      const [currentValue, setCurrentValue] = React.useState(DataStore[id] || null);
+
+                                      return React.createElement(SearchableSelect, {
+                                          options,
+                                          value: options.find((o) => o.value === currentValue),
+                                          placeholder: "Select a Timezone",
+                                          maxVisibleItems: 5,
+                                          closeOnSelect: true,
+                                          onChange: (value) => {
+                                              setCurrentValue(value);
+
+                                              outvalue = value;
+                                          },
+                                      });
                                   }),
                               ],
                               {
                                   confirmText: "Set",
                                   onConfirm: () => {
-                                      DataStore[id] = [hours, minutes];
+                                      DataStore[id] = outvalue;
 
-                                      BdApi.showToast(`Timezone set to UTC${hours > 0 ? `+${hours}` : hours}${minutes ? `:${minutes}` : ""} for ${user.username}`, {
+                                      BdApi.showToast(`Timezone set to ${outvalue} for ${user.username}`, {
                                           type: "success",
                                       });
                                   },
@@ -250,74 +281,21 @@ module.exports = (() => {
                           });
                       }
 
-                      getLocalTime(id, time) {
+                      getTime(id, time, props) {
                           const timezone = DataStore[id];
 
                           if (!timezone) return null;
 
-                          let hours;
-                          let minutes;
+                          const date = new Date(time);
 
-                          if (time) {
-                              hours = time.getUTCHours() + Number(timezone[0]);
-                              minutes = time.getUTCMinutes() + Number(timezone[1]);
-                          } else {
-                              hours = new Date().getUTCHours() + Number(timezone[0]);
-                              minutes = new Date().getUTCMinutes() + Number(timezone[1]);
-                          }
-
-                          if (hours >= 24) {
-                              hours -= 24;
-                          } else if (hours < 0) {
-                              hours += 24;
-                          }
-
-                          if (minutes >= 60) {
-                              minutes -= 60;
-                              hours += 1;
-                          } else if (minutes < 0) {
-                              minutes += 60;
-                              hours -= 1;
-                          }
-
-                          if (this.settings.twentyFourHours) {
-                              return `${hours.toString().length === 1 ? `0${hours}` : hours}:${minutes.toString().length === 1 ? `0${minutes}` : minutes}`;
-                          }
-
-                          const hour = hours > 12 ? hours - 12 : hours == 0 ? 12 : hours;
-                          const ampm = hours >= 12 ? "PM" : "AM";
-
-                          return `${hour}:${minutes.toString().length === 1 ? `0${minutes}` : minutes} ${ampm}`;
-                      }
-
-                      getFullTime(id, time) {
-                          const timezone = DataStore[id];
-
-                          if (!timezone) return null;
-
-                          let date;
-
-                          if (time) {
-                              date = new Date(time);
-                          } else {
-                              date = new Date();
-                          }
-
-                          date.setTime(date.getTime() - date.getTimezoneOffset() * -60000 + timezone[0] * 3600000 + timezone[1] * 60000);
-
-                          let ret = date.toLocaleString("en-US", {
-                              weekday: "long",
-                              year: "numeric",
-                              month: "long",
-                              day: "numeric",
-                              hour: "numeric",
-                              minute: "numeric",
+                          const formatter = new Intl.DateTimeFormat(i18n?.getLocale?.() ?? "en-US", {
                               hourCycle: this.settings.twentyFourHours ? "h23" : "h12",
+                              timeZone: timezone,
+                              timeZoneName: this.settings.showOffset ? "shortOffset" : undefined,
+                              ...props,
                           });
 
-                          ret = ret.replace(/,(?=[^,]*$)/, "");
-
-                          return ret;
+                          return formatter.format(date);
                       }
 
                       onStop() {
